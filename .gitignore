@@ -1,0 +1,12 @@
+# build artifacts / staged binaries
+*.o
+*.ko
+*.deb
+build/
+**/*.bin
+# capture files
+*.pcap
+*.sdp
+*.h265
+*.mkv
+*.mp4
