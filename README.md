@@ -51,5 +51,8 @@ errors. Env knobs: `WFBVID_NV21` (default 1, DE33 chroma workaround), `WFBVID_BU
 | 0 — player pipe (RTP→Cedrus), front-end choice | ✅ done (libav/SDP) |
 | 1 — build `rtl8812au` + `wfb-ng` swfec on the board | ✅ done |
 | **player** — `wfbvid` live RTP→plane | ✅ built, validated end-to-end (418 frames from synthetic RTP) |
-| 2 — 8812au monitor-mode bring-up | ⏳ pending adapter |
-| 3 — live RF link (drone → `wfb_rx` → player) | ⏳ pending adapter + drone |
+| 2 — 8812au monitor-mode bring-up | ✅ done (ch161, non-DFS) |
+| 3 — live RF link (drone → `wfb_rx` → player) | ✅ **working** — live 1080p60 H.265 on the plane (colour tuning pending) |
+
+**Start here:** [`docs/BRINGUP.md`](docs/BRINGUP.md) — the full start-to-working
+story + reproduce recipe. One-command launch: `groundstation/run-gs.sh`.
