@@ -25,7 +25,31 @@ staged bring-up plan; [`docs/findings/`](docs/findings/) for test results.
 - `player/` — the RTP-enabled player (derived from `drmvid`)
 - `docs/` — specs + findings
 
+## Player usage
+
+```sh
+# build (on the board)
+cc player/wfbvid.c -o /usr/local/bin/wfbvid \
+   $(pkg-config --cflags --libs libavformat libavcodec libavutil libdrm)
+
+# live: wfb_rx de-FECs the drone link -> RTP udp:5600 -> player
+wfb_rx -K gs.key -c 127.0.0.1 -u 5600 -p <radio_port> <monitor_iface> &
+wfbplay player/wfb-h265.sdp     # frees the console, plays, restores on exit
+```
+
+`wfbvid` takes an SDP (or `rtp://` URL), pulls the codec/params from it, ingests
+the live RTP with a large UDP socket buffer + low-delay flags, HW-decodes on
+Cedrus, and scans direct-to-plane — **no PTS pacing** (present on decode),
+modeset **deferred to the first frame**, and tolerant of packet-loss decode
+errors. Env knobs: `WFBVID_NV21` (default 1, DE33 chroma workaround), `WFBVID_BUFSIZE`,
+`WFBVID_ENC`/`WFBVID_RANGE`.
+
 ## Status
 
-Stages 0 (player pipe) and 1 (build radio stack) in progress; 2 (adapter) and
-3 (live RF) pending hardware bring-up.
+| Stage | State |
+|---|---|
+| 0 — player pipe (RTP→Cedrus), front-end choice | ✅ done (libav/SDP) |
+| 1 — build `rtl8812au` + `wfb-ng` swfec on the board | ✅ done |
+| **player** — `wfbvid` live RTP→plane | ✅ built, validated end-to-end (418 frames from synthetic RTP) |
+| 2 — 8812au monitor-mode bring-up | ⏳ pending adapter |
+| 3 — live RF link (drone → `wfb_rx` → player) | ⏳ pending adapter + drone |
