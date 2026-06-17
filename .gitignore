@@ -10,3 +10,9 @@ build/
 *.h265
 *.mkv
 *.mp4
+
+# radio / ground-station stack — outside this player-only repo (kept on disk, untracked)
+/groundstation/
+/docs/BRINGUP.md
+/docs/findings/stage1-radio-build.md
+/docs/findings/stage2-3-live-link.md

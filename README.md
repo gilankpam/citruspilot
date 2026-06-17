@@ -1,58 +1,67 @@
-# orangepi-fpv-gs
+# CitrusPilot
 
-Orange Pi Zero 2W (Allwinner **H618**) as a low-latency **wfb-ng FPV ground
-station + hardware video player**. The sunxi analog of
-[`PixelPilot_rk`](https://github.com/gilankpam/PixelPilot_rk): receive the
-drone's H.265 over a wfb-ng radio link, hardware-decode on the Cedrus VPU, and
-scan **direct-to-plane** (no GPU compositing) with the CPU idle.
+Low-latency **FPV video player** for the Orange Pi Zero 2W (Allwinner **H618**)
+and other sunxi boards with a **Cedrus** VPU + **DE33** display engine. The sunxi
+analog of [`PixelPilot_rk`](https://github.com/gilankpam/PixelPilot_rk): take the
+drone's H.265 off a wfb-ng link, hardware-decode on Cedrus, and scan
+**direct-to-plane** (no GPU compositing) with the CPU mostly idle.
+
+> The name: the Allwinner video engine is **Cedrus** → **Citrus**, it runs on an
+> **Orange** Pi, and it's a **PixelPilot** for FPV — three puns, one word.
 
 ```
-drone (OpenIPC VTX) → H.265 RTP → wfb-ng TX → 8812au ))) RF ((( 8812au
-  → wfb-ng RX → RTP udp:5600 → [depay → Cedrus decode → DRM overlay plane]
+drone (OpenIPC VTX, H.265) → wfb-ng link → wfb_rx → RTP udp:5600
+  → [ CitrusPilot: libav RTP → Cedrus decode → DRM overlay plane ]
 ```
+
+CitrusPilot is the **player only**. It consumes the de-FEC'd RTP that an
+**external** `wfb_rx` forwards to a local UDP port. Building and running the radio
+stack itself (the `rtl8812au` driver, `wfb-ng`) is out of scope for this repo — it
+lives separately; `wfb_rx` is just the upstream that must be feeding `udp:5600`.
 
 The decode+display back-end is proven in
-[`h618-mainline-video`](../../h618-mainline-video) (`drmvid`). This repo adds the
-radio ingress (`rtl8812au` + `wfb-ng` swfec) and the live RTP front-end.
-
-See [`docs/superpowers/specs/`](docs/superpowers/specs/) for the design and the
-staged bring-up plan; [`docs/findings/`](docs/findings/) for test results.
+[`h618-mainline-video`](../../h618-mainline-video) (`drmvid`); CitrusPilot adds the
+live RTP front-end on top of it.
 
 ## Layout
 
-- `smoke/` — Stage 0: synthetic-RTP player-pipe validation (no radio HW)
-- `groundstation/` — `rtl8812au` + `wfb-ng` build / install / bring-up
-- `player/` — the RTP-enabled player (derived from `drmvid`)
-- `docs/` — specs + findings
+- `player/` — the player: `wfbvid` (RTP → Cedrus → DRM plane), the `wfbplay`
+  launcher, and a sample SDP
+- `smoke/` — synthetic-RTP harness to validate the player front-end (no radio HW)
+- `docs/` — design specs + findings
 
-## Player usage
+## Build & run
 
 ```sh
 # build (on the board)
 cc player/wfbvid.c -o /usr/local/bin/wfbvid \
    $(pkg-config --cflags --libs libavformat libavcodec libavutil libdrm)
+cp player/wfbplay /usr/local/bin/ ; cp player/wfb-h265.sdp /root/
 
-# live: wfb_rx de-FECs the drone link -> RTP udp:5600 -> player
+# upstream (external): wfb_rx de-FECs the drone link -> RTP udp:5600
 wfb_rx -K gs.key -c 127.0.0.1 -u 5600 -p <radio_port> <monitor_iface> &
-wfbplay player/wfb-h265.sdp     # frees the console, plays, restores on exit
+
+# play: frees the console, plays, restores it on exit
+wfbplay /root/wfb-h265.sdp
 ```
 
 `wfbvid` takes an SDP (or `rtp://` URL), pulls the codec/params from it, ingests
 the live RTP with a large UDP socket buffer + low-delay flags, HW-decodes on
-Cedrus, and scans direct-to-plane — **no PTS pacing** (present on decode),
-modeset **deferred to the first frame**, and tolerant of packet-loss decode
-errors. Env knobs: `WFBVID_NV21` (default 1, DE33 chroma workaround), `WFBVID_BUFSIZE`,
+Cedrus, and scans direct-to-plane — **no PTS pacing** (present on decode), modeset
+**deferred to the first frame**, and tolerant of packet-loss decode errors. Env
+knobs: `WFBVID_NV21` (default 1, DE33 chroma workaround), `WFBVID_BUFSIZE`,
 `WFBVID_ENC`/`WFBVID_RANGE`.
+
+Requires the patched mainline kernel (NV12 on the DE33 VI plane, patch `0099`) and
+the v4l2request ffmpeg from `h618-mainline-video`.
 
 ## Status
 
-| Stage | State |
+| Item | State |
 |---|---|
-| 0 — player pipe (RTP→Cedrus), front-end choice | ✅ done (libav/SDP) |
-| 1 — build `rtl8812au` + `wfb-ng` swfec on the board | ✅ done |
-| **player** — `wfbvid` live RTP→plane | ✅ built, validated end-to-end (418 frames from synthetic RTP) |
-| 2 — 8812au monitor-mode bring-up | ✅ done (ch161, non-DFS) |
-| 3 — live RF link (drone → `wfb_rx` → player) | ✅ **working** — live 1080p60 H.265 on the plane (colour tuning pending) |
+| player pipe (RTP→Cedrus), front-end choice | ✅ libav/SDP |
+| `wfbvid` live RTP→plane | ✅ validated end-to-end — live 1080p60 H.265 on the plane |
+| OSD overlay (wfb stats / CPU / mem / temp) | 🚧 in design |
 
-**Start here:** [`docs/BRINGUP.md`](docs/BRINGUP.md) — the full start-to-working
-story + reproduce recipe. One-command launch: `groundstation/run-gs.sh`.
+> The radio prerequisite (rtl8812au + wfb-ng bring-up) is documented separately and
+> is **not** part of this repo.
