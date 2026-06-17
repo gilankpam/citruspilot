@@ -4,13 +4,12 @@
 # raises the UDP socket buffer (bursty RTP), frees the decoder, plays, and
 # restores the console on exit.
 #
-#   wfbplay [stream.sdp]      (default /root/stream.sdp)
+#   wfbplay [--port N]      (default port 5600)
 #
-# Pair with the receiver, e.g.:
+# Pair with an external receiver, e.g.:
 #   wfb_rx -K gs.key -c 127.0.0.1 -u 5600 -p <radio_port> <monitor_iface> &
-#   wfbplay /root/wfb-h265.sdp
+#   wfbplay --port 5600
 set -u
-SDP="${1:-/root/stream.sdp}"
 BIN="${WFBVID:-/usr/local/bin/wfbvid}"
 
 restore() {
@@ -25,4 +24,4 @@ sysctl -wq net.core.rmem_max=26214400 net.core.rmem_default=26214400 2>/dev/null
 fuser -k /dev/video0 2>/dev/null || true
 sleep 1
 
-"$BIN" "$SDP"     # not exec'd, so the restore trap runs on exit
+"$BIN" "$@"     # not exec'd, so the restore trap runs on exit

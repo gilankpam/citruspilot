@@ -25,8 +25,8 @@ live RTP front-end on top of it.
 
 ## Layout
 
-- `player/` — the player: `wfbvid` (RTP → Cedrus → DRM plane), the `wfbplay`
-  launcher, and a sample SDP
+- `player/` — the player: `wfbvid` (RTP → Cedrus → DRM plane) and the `wfbplay`
+  launcher
 - `smoke/` — synthetic-RTP harness to validate the player front-end (no radio HW)
 - `docs/` — design specs + findings
 
@@ -34,23 +34,27 @@ live RTP front-end on top of it.
 
 ```sh
 # build (on the board)
-cc player/wfbvid.c -o /usr/local/bin/wfbvid \
+cc player/wfbvid.c player/osd.c player/osd_render.c player/stats.c \
+   -o /usr/local/bin/wfbvid \
    $(pkg-config --cflags --libs libavformat libavcodec libavutil libdrm)
-cp player/wfbplay /usr/local/bin/ ; cp player/wfb-h265.sdp /root/
+cp player/wfbplay /usr/local/bin/
 
 # upstream (external): wfb_rx de-FECs the drone link -> RTP udp:5600
 wfb_rx -K gs.key -c 127.0.0.1 -u 5600 -p <radio_port> <monitor_iface> &
 
-# play: frees the console, plays, restores it on exit
-wfbplay /root/wfb-h265.sdp
+# play: listens forever on udp:5600, HUD overlay on, console restored on exit
+wfbplay --port 5600
 ```
 
-`wfbvid` takes an SDP (or `rtp://` URL), pulls the codec/params from it, ingests
+`wfbvid` listens on a UDP port (default 5600) with a built-in SDP, ingests
 the live RTP with a large UDP socket buffer + low-delay flags, HW-decodes on
-Cedrus, and scans direct-to-plane — **no PTS pacing** (present on decode), modeset
-**deferred to the first frame**, and tolerant of packet-loss decode errors. Env
-knobs: `WFBVID_NV21` (default 1, DE33 chroma workaround), `WFBVID_BUFSIZE`,
-`WFBVID_ENC`/`WFBVID_RANGE`.
+Cedrus, and scans direct-to-plane — **no PTS pacing** (present on decode), the
+screen brought up at **startup** (black primary + OSD) with the video plane added
+on the first frame, tolerant of packet-loss decode errors, and runs forever — on
+a stream drop the last frame stays **frozen** and it reconnects on the next IDR.
+Env knobs: `WFBVID_OSD` (1=on, default), `WFBVID_OSD_SCALE` (glyph scale, default 2),
+`WFBVID_PT` (RTP payload type, default 97), `WFBVID_NV21` (default 1, DE33 chroma
+workaround), `WFBVID_BUFSIZE`, `WFBVID_ENC`/`WFBVID_RANGE`.
 
 Requires the patched mainline kernel (NV12 on the DE33 VI plane, patch `0099`) and
 the v4l2request ffmpeg from `h618-mainline-video`.
@@ -61,7 +65,7 @@ the v4l2request ffmpeg from `h618-mainline-video`.
 |---|---|
 | player pipe (RTP→Cedrus), front-end choice | ✅ libav/SDP |
 | `wfbvid` live RTP→plane | ✅ validated end-to-end — live 1080p60 H.265 on the plane |
-| OSD overlay (wfb stats / CPU / mem / temp) | 🚧 in design |
+| OSD overlay (system: CPU/mem/temp) + run-forever daemon | ✅ v1 |
 
 > The radio prerequisite (rtl8812au + wfb-ng bring-up) is documented separately and
 > is **not** part of this repo.
