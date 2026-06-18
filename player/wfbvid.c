@@ -37,13 +37,14 @@
 #include <xf86drmMode.h>
 #include <drm_fourcc.h>
 
-#include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/hwcontext_drm.h>
 #include <libavutil/pixdesc.h>
 #include <time.h>
-#include "sdp.h"
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include "rtp_h265.h"
 #include "osd.h"
 
 #define DIE(...) do { fprintf(stderr, "wfbvid: " __VA_ARGS__); fprintf(stderr, "\n"); exit(1); } while (0)
@@ -61,7 +62,7 @@ static uint32_t Pp_FB, Pp_CRTC, Pp_CX, Pp_CY, Pp_CW, Pp_CH, Pp_SX, Pp_SY, Pp_SW,
 static uint32_t Vp_CENC, Vp_CRANGE;
 static uint64_t vplane_zmax = 1;
 static int opt_enc, opt_range, opt_nv21, opt_debug;
-static int opt_port, opt_pt;
+static int opt_port;
 static uint64_t video_zpos = 1;              /* set from vplane zmax at runtime */
 static uint32_t osd_plane_id;
 static osd_plane_props Op;          /* OSD plane prop ids */
@@ -72,23 +73,6 @@ static int opt_osd, opt_osd_scale;
 static volatile sig_atomic_t running = 1;
 static void on_signal(int s) { (void)s; running = 0; }
 
-/* Monotonic clock + a deadline used by the libav interrupt callback so a
- * blocking read wakes ~4x/s during a stall (to honor Ctrl-C and, later, refresh
- * the OSD) without tearing down the input. */
-static int64_t wake_deadline_ms;
-static int64_t now_ms(void)
-{
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
-}
-static int interrupt_cb(void *p)
-{
-    (void)p;
-    if (!running) return 1;
-    if (wake_deadline_ms && now_ms() >= wake_deadline_ms) return 1;
-    return 0;
-}
 static void nsleep_ms(long ms)
 {
     struct timespec t = { ms / 1000, (ms % 1000) * 1000000L };
@@ -153,7 +137,22 @@ static uint32_t fb_from_frame(AVFrame *f)
                                         handles, pitches, offsets, mods, &fb, DRM_MODE_FB_MODIFIERS);
     else
         rc = drmModeAddFB2(drm_fd, f->width, f->height, fourcc, handles, pitches, offsets, &fb, 0);
-    if (rc) { LOG("AddFB2 failed (%.4s mod %#lx): %s", (char *)&fourcc, (unsigned long)m, strerror(errno)); return 0; }
+    if (rc) {
+        static int dumped = 0;
+        if (!dumped) {
+            dumped = 1;
+            LOG("AddFB2 desc: objs=%d layers=%d  layer0 fmt=%.4s nb_planes=%d  obj0 mod=%#llx",
+                d->nb_objects, d->nb_layers, (char *)&d->layers[0].format,
+                d->layers[0].nb_planes, (unsigned long long)d->objects[0].format_modifier);
+            for (int l = 0; l < d->nb_layers; l++)
+                for (int p = 0; p < d->layers[l].nb_planes; p++)
+                    LOG("  L%d.P%d obj=%d pitch=%ld offset=%ld", l, p,
+                        d->layers[l].planes[p].object_index,
+                        (long)d->layers[l].planes[p].pitch, (long)d->layers[l].planes[p].offset);
+        }
+        LOG("AddFB2 failed (%.4s mod %#lx): %s", (char *)&fourcc, (unsigned long)m, strerror(errno));
+        return 0;
+    }
     return fb;
 }
 
@@ -271,52 +270,55 @@ static uint32_t make_black_primary(void)
 }
 
 typedef struct {
-    AVFormatContext *fmt;
+    int              fd;       /* UDP socket bound to the RTP port */
+    rtp_h265_t       dep;      /* H.265 RTP depacketizer (RFC 7798) */
     AVCodecContext  *cc;
+    AVCodecParserContext *parser;
     AVBufferRef     *hw;
-    int vs;
+    int got_key;   /* gate: don't feed the stateless decoder until the first IDR,
+                    * else it wedges on P-frames with not-yet-decoded references */
 } input_t;
 
-/* Open the live RTP/SDP input + a low-delay Cedrus decoder. Returns 0, or -1
- * (caller retries). Does not require any packets to have arrived yet. */
-static int open_input(input_t *in, const char *sdp_path, const char *bufsz)
+/* Open a raw UDP socket on `port` and a low-delay Cedrus decoder. We own the
+ * socket (no libavformat demuxer) so we can drain it to empty every wakeup and
+ * present only the latest frame — bounding latency on a lossy link. Returns 0,
+ * or -1 (caller retries). */
+static int open_input(input_t *in, int port, int bufsz)
 {
-    AVFormatContext *fmt = avformat_alloc_context();
-    if (!fmt) return -1;
-    fmt->interrupt_callback.callback = interrupt_cb;
-    fmt->interrupt_callback.opaque = NULL;
+    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd < 0) return -1;
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    if (bufsz > 0) setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &bufsz, sizeof bufsz);
+    struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons(port) };
+    a.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(fd, (struct sockaddr *)&a, sizeof a) < 0) { close(fd); return -1; }
 
-    AVDictionary *opts = NULL;
-    av_dict_set(&opts, "protocol_whitelist", "file,crypto,data,udp,rtp", 0);
-    av_dict_set(&opts, "buffer_size", bufsz, 0);
-    av_dict_set(&opts, "reorder_queue_size", "256", 0);
-    av_dict_set(&opts, "max_delay", "500000", 0);
-    av_dict_set(&opts, "fflags", "nobuffer", 0);
-    av_dict_set(&opts, "flags", "low_delay", 0);
-    if (avformat_open_input(&fmt, sdp_path, NULL, &opts) < 0) { av_dict_free(&opts); return -1; }
-    av_dict_free(&opts);
-    if (avformat_find_stream_info(fmt, NULL) < 0) { avformat_close_input(&fmt); return -1; }
-
-    int vs = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
-    if (vs < 0) { avformat_close_input(&fmt); return -1; }
-    AVStream *st = fmt->streams[vs];
-
-    const AVCodec *dec = avcodec_find_decoder(st->codecpar->codec_id);
+    const AVCodec *dec = avcodec_find_decoder(AV_CODEC_ID_HEVC);
     AVCodecContext *cc = avcodec_alloc_context3(dec);
-    avcodec_parameters_to_context(cc, st->codecpar);
-    cc->flags |= AV_CODEC_FLAG_LOW_DELAY;
+    if (!cc) { close(fd); return -1; }
+    cc->flags |= AV_CODEC_FLAG_LOW_DELAY;     /* VPS/SPS/PPS arrive in-band */
     AVBufferRef *hw = NULL;
     if (av_hwdevice_ctx_create(&hw, AV_HWDEVICE_TYPE_V4L2REQUEST, NULL, NULL, 0) < 0) {
-        avcodec_free_context(&cc); avformat_close_input(&fmt); return -1;
+        avcodec_free_context(&cc); close(fd); return -1;
     }
     cc->hw_device_ctx = av_buffer_ref(hw);
     cc->get_format = get_drm_prime;
     cc->extra_hw_frames = 8;
     if (avcodec_open2(cc, dec, NULL) < 0) {
-        av_buffer_unref(&hw); avcodec_free_context(&cc); avformat_close_input(&fmt); return -1;
+        av_buffer_unref(&hw); avcodec_free_context(&cc); close(fd); return -1;
     }
-    in->fmt = fmt; in->cc = cc; in->hw = hw; in->vs = vs;
-    LOG("input open: codec %s", avcodec_get_name(st->codecpar->codec_id));
+    /* The stateless decoder needs slice/reference metadata; run each access unit
+     * through the parser (same path a file decode takes). Our depacketizer hands
+     * over complete AUs, so COMPLETE_FRAMES lets the parser emit them without
+     * buffering for the next start code (lower latency). */
+    in->parser = av_parser_init(AV_CODEC_ID_HEVC);
+    if (in->parser) in->parser->flags |= PARSER_FLAG_COMPLETE_FRAMES;
+    else LOG("parser init failed — HW decode may stall");
+    rtp_h265_init(&in->dep);
+    in->got_key = 0;
+    in->fd = fd; in->cc = cc; in->hw = hw;
+    LOG("listening for H.265 RTP on udp:%d", port);
     return 0;
 }
 
@@ -324,10 +326,11 @@ static int open_input(input_t *in, const char *sdp_path, const char *bufsz)
  * last image stays frozen on screen across a reconnect. */
 static void close_input(input_t *in)
 {
+    if (in->parser) { av_parser_close(in->parser); in->parser = NULL; }
     if (in->cc)  avcodec_free_context(&in->cc);
     if (in->hw)  av_buffer_unref(&in->hw);
-    if (in->fmt) avformat_close_input(&in->fmt);
-    in->vs = -1;
+    rtp_h265_free(&in->dep);
+    if (in->fd >= 0) { close(in->fd); in->fd = -1; }
 }
 
 int main(int argc, char **argv)
@@ -336,7 +339,7 @@ int main(int argc, char **argv)
     opt_range = getenv("WFBVID_RANGE") ? atoi(getenv("WFBVID_RANGE")) : 0;  // limited
     opt_nv21  = getenv("WFBVID_NV21")  ? atoi(getenv("WFBVID_NV21"))  : 1;  // DE33 chroma swap workaround
     opt_debug = getenv("WFBVID_DEBUG") ? atoi(getenv("WFBVID_DEBUG")) : 0;
-    const char *bufsz = getenv("WFBVID_BUFSIZE") ? getenv("WFBVID_BUFSIZE") : "26214400";
+    int bufsz = getenv("WFBVID_BUFSIZE") ? atoi(getenv("WFBVID_BUFSIZE")) : 26214400;
 
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
@@ -437,7 +440,6 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--port") && i + 1 < argc) opt_port = atoi(argv[++i]);
     }
-    opt_pt = getenv("WFBVID_PT") ? atoi(getenv("WFBVID_PT")) : 97;
 
     // ---- bring a screen up immediately (preferred mode, black primary) ----
     opt_osd       = getenv("WFBVID_OSD")       ? atoi(getenv("WFBVID_OSD"))       : 1;
@@ -461,40 +463,59 @@ int main(int argc, char **argv)
     }
     startup_modeset(pfb);
 
-    // ---- compose the built-in SDP onto a temp file ----
-    char sdptext[512];
-    int sdplen = compose_sdp(sdptext, sizeof sdptext, opt_port, opt_pt);
-    if (sdplen < 0) DIE("compose_sdp overflow");
-    char sdppath[] = "/tmp/citruspilot-XXXXXX";
-    int sfd = mkstemp(sdppath);
-    if (sfd < 0) DIE("mkstemp: %s", strerror(errno));
-    if (write(sfd, sdptext, sdplen) != sdplen) DIE("write sdp");
-    close(sfd);
-    LOG("listening for H.265 RTP on udp:%d (PT %d)", opt_port, opt_pt);
-
-    // ---- run forever: connect, decode, present; freeze + reconnect on drop ----
-    input_t in = { .vs = -1 };
-    AVPacket *pkt = av_packet_alloc();
+    // ---- run forever: bind socket, depacketize, decode, present latest ----
+    input_t in = { .fd = -1 };
+    AVPacket *spkt = av_packet_alloc();   /* scratch for parser output; never unref'd (data is parser-owned) */
     AVFrame  *frame = av_frame_alloc();
     AVFrame  *held[2] = { NULL, NULL };
     uint32_t  heldfb[2] = { 0, 0 };
     int slot = 0, video_up = 0, warned_sw = 0;
+    AVFrame *pending = NULL; uint32_t pending_fb = 0;  /* newest decoded frame, not yet shown */
     long shown = 0;
+    static uint8_t rxbuf[65536];
 
-    wake_deadline_ms = now_ms() + 2000;
-    while (running && open_input(&in, sdppath, bufsz) < 0) {
-        LOG("waiting for stream on udp:%d ...", opt_port);
+    while (running && open_input(&in, opt_port, bufsz) < 0) {
+        LOG("socket bind failed on udp:%d — retrying ...", opt_port);
         nsleep_ms(500);
-        wake_deadline_ms = now_ms() + 2000;
     }
 
     while (running) {
         osd_tick(osd);     /* self-throttled to 1 Hz; in-place buffer, no commit */
-        wake_deadline_ms = now_ms() + 250;
-        int r = av_read_frame(in.fmt, pkt);
-        if (r >= 0) {
-            if (pkt->stream_index == in.vs && avcodec_send_packet(in.cc, pkt) == 0) {
-                while (running && avcodec_receive_frame(in.cc, frame) == 0) {
+
+        /* Drain EVERY packet currently in the socket, decoding each completed
+         * access unit, but keep only the newest decoded frame. A backlog (e.g.
+         * after a loss-induced stall) is consumed at full decoder speed — not at
+         * the display refresh rate — so the delay never accumulates. */
+        for (;;) {
+            ssize_t n = recv(in.fd, rxbuf, sizeof rxbuf, MSG_DONTWAIT);
+            if (n <= 0) break;                       /* socket drained (EAGAIN) */
+
+            const uint8_t *au; size_t au_len;
+            if (rtp_h265_input(&in.dep, rxbuf, (size_t)n, &au, &au_len) != 1)
+                continue;                            /* AU not complete, or dropped on loss */
+
+            /* Reframe the access unit through the parser for the stateless decoder. */
+            const uint8_t *adata = au; int asize = (int)au_len;
+            while (asize > 0 && running) {
+                if (in.parser) {
+                    int used = av_parser_parse2(in.parser, in.cc, &spkt->data, &spkt->size,
+                                                adata, asize, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+                    if (used < 0) break;
+                    adata += used; asize -= used;
+                    if (spkt->size <= 0) { if (used == 0) break; continue; }
+                    /* Decode only from an IDR; the gate is re-armed on a decode
+                     * error (below), so loss skips to the next keyframe instead of
+                     * feeding broken frames that wedge the stateless decoder. */
+                    if (!in.got_key) {
+                        if (in.parser->key_frame == 1) in.got_key = 1;
+                        else continue;
+                    }
+                } else {
+                    spkt->data = (uint8_t *)adata; spkt->size = asize; asize = 0;
+                }
+                if (avcodec_send_packet(in.cc, spkt) != 0) { in.got_key = 0; continue; }
+                int rr = 0;
+                while (running && (rr = avcodec_receive_frame(in.cc, frame)) == 0) {
                     if (frame->format != AV_PIX_FMT_DRM_PRIME) {
                         if (!warned_sw) { LOG("not hardware-decoded (got %s) — skipping",
                                               av_get_pix_fmt_name(frame->format)); warned_sw = 1; }
@@ -502,47 +523,43 @@ int main(int argc, char **argv)
                     }
                     uint32_t fb = fb_from_frame(frame);
                     if (!fb) { av_frame_unref(frame); continue; }
-                    if (!video_up) {
-                        // Bring up the video plane once, sized/centred for the
-                        // first frame. Assumes the resolution is stable across
-                        // reconnects (true for a given drone); a size change on a
-                        // later stream would need commit_video_plane to re-run.
-                        commit_video_plane(fb, frame->width, frame->height);
-                        video_up = 1; LOG("playing.");
-                    } else {
-                        drain_flip(); flip(fb);
-                    }
-                    shown++;
-                    if (held[slot]) { drmModeRmFB(drm_fd, heldfb[slot]); av_frame_free(&held[slot]); }
-                    held[slot] = frame; heldfb[slot] = fb; slot ^= 1;
+                    if (pending) { drmModeRmFB(drm_fd, pending_fb); av_frame_free(&pending); }
+                    pending = frame; pending_fb = fb;
                     frame = av_frame_alloc();
                 }
+                if (rr && rr != AVERROR(EAGAIN) && rr != AVERROR_EOF)
+                    in.got_key = 0;
             }
-            av_packet_unref(pkt);
-            continue;
         }
-        av_packet_unref(pkt);
-        if (!running) break;
-        if (r == AVERROR_EXIT) continue;          /* periodic wake — keep waiting */
 
-        /* a genuine input error: freeze last frame, recycle input, reconnect */
-        LOG("input error (%s) — reconnecting", av_err2str(r));
-        close_input(&in);
-        wake_deadline_ms = now_ms() + 2000;
-        while (running && open_input(&in, sdppath, bufsz) < 0) {
-            nsleep_ms(500);
-            wake_deadline_ms = now_ms() + 2000;
+        /* Socket drained = caught up to live: present the newest frame (vsync-paced). */
+        if (pending) {
+            if (!video_up) {
+                commit_video_plane(pending_fb, pending->width, pending->height);
+                video_up = 1; LOG("playing.");
+            } else {
+                drain_flip(); flip(pending_fb);
+            }
+            shown++;
+            if (held[slot]) { drmModeRmFB(drm_fd, heldfb[slot]); av_frame_free(&held[slot]); }
+            held[slot] = pending; heldfb[slot] = pending_fb; slot ^= 1;
+            pending = NULL; pending_fb = 0;
         }
+
+        /* Wait for the next packet — POLLIN wakes immediately on arrival; the
+         * timeout just bounds latency for Ctrl-C and the 1 Hz OSD tick. */
+        struct pollfd pfd = { .fd = in.fd, .events = POLLIN };
+        poll(&pfd, 1, 250);
     }
 
     drain_flip();
     LOG("presented %ld frames", shown);
+    if (pending) { drmModeRmFB(drm_fd, pending_fb); av_frame_free(&pending); }
     for (int i = 0; i < 2; i++) if (held[i]) { drmModeRmFB(drm_fd, heldfb[i]); av_frame_free(&held[i]); }
     if (pfb) drmModeRmFB(drm_fd, pfb);
-    av_frame_free(&frame); av_packet_free(&pkt);
+    av_frame_free(&frame); av_packet_free(&spkt);
     close_input(&in);
     osd_destroy(osd);
-    unlink(sdppath);
     drmDropMaster(drm_fd);
     close(drm_fd);
     return 0;

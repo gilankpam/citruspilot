@@ -16,4 +16,5 @@ build_and_run() {
 build_and_run test_sdp         test_sdp.c
 build_and_run test_stats       test_stats.c ../stats.c
 build_and_run test_osd_render  test_osd_render.c ../osd_render.c
+build_and_run test_rtp_h265    test_rtp_h265.c ../rtp_h265.c
 echo "all host tests passed"
