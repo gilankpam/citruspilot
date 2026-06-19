@@ -42,7 +42,7 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
               apt-get install -y --no-install-recommends \
-                gcc make libavcodec-dev libavutil-dev libdrm-dev binutils file
+                gcc libc6-dev make libavcodec-dev libavutil-dev libdrm-dev binutils file
               make
               strip citrusvid
               file citrusvid
