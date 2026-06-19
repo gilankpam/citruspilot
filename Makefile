@@ -10,7 +10,7 @@
 # Host unit tests (pure modules — any C compiler, no DRM/libav/board):
 #   make test
 #
-# Install citrusvid + citrusplay (default PREFIX=/usr/local):
+# Install citrusvid (default PREFIX=/usr/local):
 #   make install            (or: make install PREFIX=/usr DESTDIR=/staging)
 
 CC      ?= cc
@@ -60,7 +60,6 @@ test:
 
 install: $(BIN)
 	install -Dm755 $(BIN) $(DESTDIR)$(PREFIX)/bin/$(BIN)
-	install -Dm755 $(SRC)/citrusplay $(DESTDIR)$(PREFIX)/bin/citrusplay
 
 clean:
 	rm -f $(BIN) $(addprefix $(SRC)/tools/,$(TOOLS))

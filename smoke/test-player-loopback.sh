@@ -26,7 +26,8 @@ LOG=/tmp/test-citrusvid.log
 
 [ -f "$SAMPLE" ] || { echo "FAIL: sample $SAMPLE not present (stage it first, see header)"; exit 2; }
 
-# console prep (mirror citrusplay) so the modeset is not fought by fbcon
+# console prep so the modeset is not fought by fbcon (belt-and-braces for the test;
+# citrusvid itself takes DRM master and force-sets its own socket buffer)
 systemctl stop getty@tty1 2>/dev/null || true
 echo 0 > /sys/class/vtconsole/vtcon1/bind 2>/dev/null || true
 sysctl -wq net.core.rmem_max=26214400 net.core.rmem_default=26214400 2>/dev/null || true

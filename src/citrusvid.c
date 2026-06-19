@@ -299,7 +299,11 @@ static int open_input(input_t *in, int port, int bufsz)
     if (fd < 0) return -1;
     int one = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
-    if (bufsz > 0) setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &bufsz, sizeof bufsz);
+    /* SO_RCVBUFFORCE (needs CAP_NET_ADMIN, i.e. root) bypasses the net.core.rmem_max
+     * cap so the full buffer applies without a sysctl wrapper; fall back to the
+     * capped SO_RCVBUF if we're not privileged. */
+    if (bufsz > 0 && setsockopt(fd, SOL_SOCKET, SO_RCVBUFFORCE, &bufsz, sizeof bufsz) < 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &bufsz, sizeof bufsz);
     struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons(port) };
     a.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(fd, (struct sockaddr *)&a, sizeof a) < 0) { close(fd); return -1; }

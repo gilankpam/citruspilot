@@ -24,15 +24,15 @@ for this hardware; CitrusPilot adds the live RTP front-end on top of it.
 
 ## Layout
 
-- `src/` — the player: `citrusvid` (RTP → Cedrus → DRM plane) and the `citrusplay`
-  launcher (plus `tools/` board diagnostics and `tests/` host unit tests)
+- `src/` — the player: `citrusvid` (RTP → Cedrus → DRM plane), plus `tools/` board
+  diagnostics and `tests/` host unit tests
 - `smoke/` — synthetic-RTP harness to validate the player front-end (no radio HW)
 - `docs/` — design specs + findings
 
 ## Build & run
 
 ```sh
-# build (on the board) + install citrusvid + citrusplay to /usr/local/bin
+# build (on the board) + install citrusvid to /usr/local/bin
 make && make install
 
 # cross-build from an x86 dev host against a buildroot staging sysroot:
@@ -42,8 +42,9 @@ make && make install
 # upstream (external): wfb_rx de-FECs the drone link -> RTP udp:5600
 wfb_rx -K gs.key -c 127.0.0.1 -u 5600 -p <radio_port> <monitor_iface> &
 
-# play: listens forever on udp:5600, HUD overlay on, console restored on exit
-citrusplay --port 5600
+# play: listens forever on udp:5600, HUD overlay on. Run as root (it takes DRM
+# master and force-sets a large UDP buffer) on a free console.
+citrusvid --port 5600
 ```
 
 `citrusvid` listens on a UDP port (default 5600) with a built-in SDP, ingests
