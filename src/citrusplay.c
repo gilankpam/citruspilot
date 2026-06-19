@@ -9,9 +9,11 @@
 //     configurable UDP port, with a large socket buffer (bursty RTP) + low-delay
 //   * NO presentation pacing — each frame is scanned out the instant it decodes
 //   * RUN FOREVER — the screen is brought up at startup (preferred mode, black
-//     primary); the video plane appears on the first decoded frame. On a stream
-//     drop the last frame stays FROZEN and the player keeps waiting / reconnects,
-//     resuming on the next IDR. Only SIGINT/SIGTERM exits.
+//     primary); the video plane appears on the first decoded frame, at which
+//     point the HDMI mode is retuned to MATCH the stream size (DE33 is 1:1, no
+//     scaler — see retune_mode). On a stream drop the last frame stays FROZEN
+//     and the player keeps waiting / reconnects, resuming on the next IDR. Only
+//     SIGINT/SIGTERM exits.
 //   * tolerant of decode errors (packet loss -> corrupt frames until the next
 //     IDR) — it skips bad frames, never crashes
 //
@@ -249,8 +251,9 @@ static enum AVPixelFormat get_drm_prime(AVCodecContext *c, const enum AVPixelFor
     return AV_PIX_FMT_NONE;
 }
 
-/* Pick the connector's preferred mode (fallback 1080p, then first). Chosen once
- * at startup; video is centred 1:1 within it (the DE33 VI scaler can't upscale). */
+/* Pick the connector's preferred mode (fallback 1080p, then first) to bring a
+ * screen up before any signal. This is the STARTUP mode only — once the first
+ * frame decodes, retune_mode() switches to the mode matching the stream size. */
 static drmModeConnector *g_conn;
 static void pick_preferred_mode(void)
 {
@@ -277,6 +280,57 @@ static uint32_t make_black_primary(void)
     void *pm = mmap(0, cd.size, PROT_READ | PROT_WRITE, MAP_SHARED, drm_fd, md.offset);
     memset(pm, 0, cd.size); munmap(pm, cd.size);
     return pfb;
+}
+
+/* Auto-match the HDMI output to the decoded stream size. Called once, on the
+ * first frame, once the real video resolution is known. The DE33 VI plane is
+ * 1:1 (no scaler), so the ONLY way to show the stream pixel-for-pixel AND
+ * full-screen is to drive the panel at the stream's own resolution — otherwise
+ * a larger stream is cropped to the mode and a smaller one is letterboxed. The
+ * sink's EDID-preferred mode (picked at startup so a screen comes up before any
+ * signal) is often NOT the stream size — e.g. FPV goggles advertise 720p100 as
+ * preferred but also list 1080p. Switch to the matching mode (highest refresh,
+ * non-interlaced) if the sink offers one; otherwise keep the startup mode. The
+ * mode-sized resources (black primary, OSD) are rebuilt for the new mode. */
+static void retune_mode(int w, int h, uint32_t *pfb_io)
+{
+    if (mode.hdisplay == w && mode.vdisplay == h) return;   /* startup mode already matches */
+
+    int mi = -1, best = -1;
+    for (int i = 0; i < g_conn->count_modes; i++) {
+        drmModeModeInfo *m = &g_conn->modes[i];
+        if (m->hdisplay == w && m->vdisplay == h &&
+            !(m->flags & DRM_MODE_FLAG_INTERLACE) && (int)m->vrefresh > best) {
+            best = m->vrefresh; mi = i;
+        }
+    }
+    if (mi < 0) {
+        LOG("no %dx%d mode on sink — keeping %s; %dx%d stream will be %s",
+            w, h, mode.name, w, h, (w > mode.hdisplay || h > mode.vdisplay) ? "cropped" : "letterboxed");
+        return;
+    }
+
+    drmModeModeInfo nm = g_conn->modes[mi];
+    uint32_t nblob = 0;
+    if (drmModeCreatePropertyBlob(drm_fd, &nm, sizeof(nm), &nblob)) {
+        LOG("retune: mode-blob create failed — keeping %s", mode.name);
+        return;
+    }
+    if (mode_blob) drmModeDestroyPropertyBlob(drm_fd, mode_blob);
+    mode = nm; mode_blob = nblob;
+    LOG("retuned HDMI to %s (%dx%d@%d) to match the %dx%d stream",
+        mode.name, mode.hdisplay, mode.vdisplay, mode.vrefresh, w, h);
+
+    uint32_t newpfb = make_black_primary();        /* old pfb is the wrong size for the new mode */
+    if (osd) {                                     /* OSD dumb buffer was sized to the old mode */
+        osd_destroy(osd);
+        osd = osd_create(drm_fd, crtc_id, osd_plane_id, &Op,
+                         mode.hdisplay, mode.vdisplay, 16, opt_osd_scale, osd_zpos_max);
+        if (!osd) LOG("OSD rebuild after retune failed — video unaffected");
+    }
+    startup_modeset(newpfb);
+    if (*pfb_io) drmModeRmFB(drm_fd, *pfb_io);
+    *pfb_io = newpfb;
 }
 
 typedef struct {
@@ -549,6 +603,7 @@ int main(int argc, char **argv)
         /* Socket drained = caught up to live: present the newest frame (vsync-paced). */
         if (pending) {
             if (!video_up) {
+                retune_mode(pending->width, pending->height, &pfb);  /* match HDMI to the stream (DE33 is 1:1) */
                 commit_video_plane(pending_fb, pending->width, pending->height);
                 video_up = 1; LOG("playing.");
             } else {

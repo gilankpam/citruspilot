@@ -66,13 +66,19 @@ a v4l2request-patched ffmpeg (the `ffmpeg-v4l2request` build).
 - **No video scaling (DE33 VI plane is 1:1 only).** The DE33 video plane cannot
   scale — it rejects any commit where the source and destination rects differ
   (probed: 1:1 accepted, up- *and* down-scale rejected with `ERANGE`). So the
-  decoded frame is scanned out at its **native size, centred** in the display
-  mode. If the monitor's mode is larger than the stream (e.g. a 1440p/4K monitor
-  with a 1080p or 720p drone), you get **black padding** around the video.
-  Workaround: drive the HDMI output at the stream's resolution (so the *monitor*
-  upscales) — pick a matching mode, e.g. 1080p for a 1080p stream. Unlike
-  Rockchip (`PixelPilot_rk`), which fills the screen via the VOP plane's hardware
-  scaler, the DE33 has no such scaler, so plane-side fill is not an option.
+  decoded frame is scanned out at its **native size** in the display mode. To
+  avoid cropping (mode smaller than the stream) or black padding (mode larger),
+  `citrusplay` **auto-matches the HDMI output mode to the stream** on the first
+  decoded frame: it brings the screen up at startup in the sink's EDID-preferred
+  mode, then — once it knows the real video size — retunes the panel to the EDID
+  mode of the same resolution (highest non-interlaced refresh) if the sink offers
+  one (see `retune_mode` in `src/citrusplay.c`). This matters because many FPV
+  goggles advertise **720p as their preferred mode** even though they also list
+  1080p — so a 1080p stream would otherwise be cropped to a 720p viewport. If the
+  sink has no mode matching the stream, the startup mode is kept and the frame is
+  centred (cropped or letterboxed) as before. Unlike Rockchip (`PixelPilot_rk`),
+  which fills the screen via the VOP plane's hardware scaler, the DE33 has no such
+  scaler, so plane-side fill is not an option.
 
 ## Status
 
