@@ -1,0 +1,84 @@
+name: release
+
+# Build the Allwinner (aarch64) binary and publish a rolling "latest" release
+# on every push to main. The binary links ffmpeg 7.x (libavcodec.so.61 /
+# libavutil.so.59) + libdrm.so.2 — Debian trixie ships exactly those sonames, so
+# we build natively inside an arm64 trixie container (via QEMU) for an ABI match.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host unit tests (pure modules)
+        run: make test
+
+  build-release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build citrusvid for aarch64 (Allwinner) in an arm64 trixie container
+        run: |
+          docker run --rm --platform linux/arm64 -v "$PWD":/src -w /src \
+            debian:trixie-slim bash -euxc '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                gcc make libavcodec-dev libavutil-dev libdrm-dev binutils file
+              make
+              strip citrusvid
+              file citrusvid
+              echo "--- NEEDED ---"; objdump -p citrusvid | grep NEEDED
+            '
+
+      - name: Package
+        id: pkg
+        run: |
+          NAME=citruspilot-aarch64
+          mkdir -p "dist/$NAME"
+          cp citrusvid src/citrusplay README.md "dist/$NAME/"
+          tar -C dist -czf "$NAME.tar.gz" "$NAME"
+          sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
+          echo "tarball=$NAME.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Publish rolling "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="$(git rev-parse --short HEAD)"
+          DATE="$(date -u +%Y-%m-%d)"
+          NOTES="$(cat <<EOF
+          Rolling build of \`main\` — commit \`$SHA\` ($DATE).
+
+          **Target:** Allwinner aarch64 (e.g. Orange Pi Zero 2W / H618).
+          **Runtime deps:** ffmpeg 7.x (\`libavcodec.so.61\`, \`libavutil.so.59\`) + \`libdrm.so.2\`.
+
+          Install: unpack and copy \`citrusvid\` -> \`/usr/local/bin\`, \`citrusplay\` -> \`/usr/bin\`.
+          EOF
+          )"
+          # Recreate the rolling tag/release at the current commit.
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest \
+            --title "Latest ($SHA)" \
+            --notes "$NOTES" \
+            --target "$GITHUB_SHA" \
+            "${{ steps.pkg.outputs.tarball }}" \
+            "${{ steps.pkg.outputs.tarball }}.sha256"
