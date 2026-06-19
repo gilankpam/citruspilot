@@ -1,10 +1,10 @@
 #!/bin/sh
-# test-player-loopback.sh — integration test for the wfbvid HW-decode path.
+# test-player-loopback.sh — integration test for the citrusvid HW-decode path.
 # RUNS ON THE GS. Loops a clean, zero-loss in-band H.265 file in as RTP and
-# asserts wfbvid actually HW-decodes and PRESENTS frames to the plane.
+# asserts citrusvid actually HW-decodes and PRESENTS frames to the plane.
 #
 # This is the regression test for the RTP -> stateless-Cedrus stall: without the
-# in-decoder HEVC parser, wfbvid gets 0 DRM_PRIME frames out of a *clean* stream
+# in-decoder HEVC parser, citrusvid gets 0 DRM_PRIME frames out of a *clean* stream
 # ("Failed waiting on capture buffer", "presented 0 frames"). With the parser it
 # presents a continuous stream. Pass criterion: it prints "playing." and
 # "presented N frames" with N greater than a threshold.
@@ -17,16 +17,16 @@
 #     sample_inband.mp4 && scp -O sample_inband.mp4 root@10.18.0.1:/root/
 set -u
 SAMPLE="${SAMPLE:-/root/sample_inband.mp4}"
-BIN="${WFBVID:-/usr/local/bin/wfbvid}"
+BIN="${CITRUSVID:-/usr/local/bin/citrusvid}"
 PORT="${PORT:-5600}"
 PT="${PT:-97}"
 DUR="${DUR:-14}"
 MIN_FRAMES="${MIN_FRAMES:-30}"
-LOG=/tmp/test-wfbvid.log
+LOG=/tmp/test-citrusvid.log
 
 [ -f "$SAMPLE" ] || { echo "FAIL: sample $SAMPLE not present (stage it first, see header)"; exit 2; }
 
-# console prep (mirror wfbplay) so the modeset is not fought by fbcon
+# console prep (mirror citrusplay) so the modeset is not fought by fbcon
 systemctl stop getty@tty1 2>/dev/null || true
 echo 0 > /sys/class/vtconsole/vtcon1/bind 2>/dev/null || true
 sysctl -wq net.core.rmem_max=26214400 net.core.rmem_default=26214400 2>/dev/null || true
@@ -60,7 +60,7 @@ if [ "$PLAYING" -ge 1 ] && [ "$PRESENTED" -ge "$MIN_FRAMES" ]; then
     echo "PASS"
     exit 0
 fi
-echo "FAIL: wfbvid did not present a healthy frame stream"
+echo "FAIL: citrusvid did not present a healthy frame stream"
 echo "--- last log lines ---"
 grep -vE "PPS id out of range|Skipping invalid undecodable" "$LOG" | tail -8
 exit 1

@@ -25,37 +25,38 @@ live RTP front-end on top of it.
 
 ## Layout
 
-- `player/` — the player: `wfbvid` (RTP → Cedrus → DRM plane) and the `wfbplay`
-  launcher
+- `src/` — the player: `citrusvid` (RTP → Cedrus → DRM plane) and the `citrusplay`
+  launcher (plus `tools/` board diagnostics and `tests/` host unit tests)
 - `smoke/` — synthetic-RTP harness to validate the player front-end (no radio HW)
 - `docs/` — design specs + findings
 
 ## Build & run
 
 ```sh
-# build (on the board)
-cc player/wfbvid.c player/osd.c player/osd_render.c player/stats.c \
-   -o /usr/local/bin/wfbvid \
-   $(pkg-config --cflags --libs libavformat libavcodec libavutil libdrm)
-cp player/wfbplay /usr/local/bin/
+# build (on the board) + install citrusvid + citrusplay to /usr/local/bin
+make && make install
+
+# cross-build from an x86 dev host against a buildroot staging sysroot:
+#   make SYSROOT=/path/to/output/<defconfig>/staging \
+#        CC=/path/to/host/bin/aarch64-none-linux-gnu-gcc
 
 # upstream (external): wfb_rx de-FECs the drone link -> RTP udp:5600
 wfb_rx -K gs.key -c 127.0.0.1 -u 5600 -p <radio_port> <monitor_iface> &
 
 # play: listens forever on udp:5600, HUD overlay on, console restored on exit
-wfbplay --port 5600
+citrusplay --port 5600
 ```
 
-`wfbvid` listens on a UDP port (default 5600) with a built-in SDP, ingests
+`citrusvid` listens on a UDP port (default 5600) with a built-in SDP, ingests
 the live RTP with a large UDP socket buffer + low-delay flags, HW-decodes on
 Cedrus, and scans direct-to-plane — **no PTS pacing** (present on decode), the
 screen brought up at **startup** (black primary + OSD) with the video plane added
 on the first frame, tolerant of packet-loss decode errors, and runs forever — on
 a stream drop the last frame stays **frozen** and it reconnects on the next IDR.
-Env knobs: `WFBVID_OSD` (1=on, default), `WFBVID_OSD_SCALE` (glyph scale, default 2),
-`WFBVID_PT` (RTP payload type, default 97), `WFBVID_NV21` (default 0; set 1 only to
+Env knobs: `CITRUSVID_OSD` (1=on, default), `CITRUSVID_OSD_SCALE` (glyph scale, default 2),
+`CITRUSVID_PT` (RTP payload type, default 97), `CITRUSVID_NV21` (default 0; set 1 only to
 force a Cb/Cr swap — on this DE33 it makes colours wrong, e.g. red→dark blue),
-`WFBVID_BUFSIZE`, `WFBVID_ENC`/`WFBVID_RANGE`.
+`CITRUSVID_BUFSIZE`, `CITRUSVID_ENC`/`CITRUSVID_RANGE`.
 
 Requires the patched mainline kernel (NV12 on the DE33 VI plane, patch `0099`) and
 the v4l2request ffmpeg from `h618-mainline-video`.
@@ -65,7 +66,7 @@ the v4l2request ffmpeg from `h618-mainline-video`.
 | Item | State |
 |---|---|
 | player pipe (RTP→Cedrus), front-end choice | ✅ libav/SDP |
-| `wfbvid` live RTP→plane | ✅ validated end-to-end — live 1080p60 H.265 on the plane |
+| `citrusvid` live RTP→plane | ✅ validated end-to-end — live 1080p60 H.265 on the plane |
 | OSD overlay (system: CPU/mem/temp) + run-forever daemon | ✅ v1 |
 
 > The radio prerequisite (rtl8812au + wfb-ng bring-up) is documented separately and

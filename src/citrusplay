@@ -1,16 +1,16 @@
 #!/bin/sh
-# wfbplay — run wfbvid on a free console for the live wfb-ng RTP link.
+# citrusplay — run citrusvid on a free console for the live wfb-ng RTP link.
 # Frees the console (stops getty + unbinds fbcon so they don't fight the modeset),
 # raises the UDP socket buffer (bursty RTP), frees the decoder, plays, and
 # restores the console on exit.
 #
-#   wfbplay [--port N]      (default port 5600)
+#   citrusplay [--port N]      (default port 5600)
 #
 # Pair with an external receiver, e.g.:
 #   wfb_rx -K gs.key -c 127.0.0.1 -u 5600 -p <radio_port> <monitor_iface> &
-#   wfbplay --port 5600
+#   citrusplay --port 5600
 set -u
-BIN="${WFBVID:-/usr/local/bin/wfbvid}"
+BIN="${CITRUSVID:-/usr/local/bin/citrusvid}"
 
 restore() {
     echo 1 > /sys/class/vtconsole/vtcon1/bind 2>/dev/null || true
