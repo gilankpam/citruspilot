@@ -61,6 +61,19 @@ force a Cb/Cr swap — on this DE33 it makes colours wrong, e.g. red→dark blue
 Requires the patched mainline kernel (NV12 on the DE33 VI plane, patch `0099`) and
 the v4l2request ffmpeg from `h618-mainline-video`.
 
+## Limitations
+
+- **No video scaling (DE33 VI plane is 1:1 only).** The DE33 video plane cannot
+  scale — it rejects any commit where the source and destination rects differ
+  (probed: 1:1 accepted, up- *and* down-scale rejected with `ERANGE`). So the
+  decoded frame is scanned out at its **native size, centred** in the display
+  mode. If the monitor's mode is larger than the stream (e.g. a 1440p/4K monitor
+  with a 1080p or 720p drone), you get **black padding** around the video.
+  Workaround: drive the HDMI output at the stream's resolution (so the *monitor*
+  upscales) — pick a matching mode, e.g. 1080p for a 1080p stream. Unlike
+  Rockchip (`PixelPilot_rk`), which fills the screen via the VOP plane's hardware
+  scaler, the DE33 has no such scaler, so plane-side fill is not an option.
+
 ## Status
 
 | Item | State |
