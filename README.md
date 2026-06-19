@@ -53,8 +53,9 @@ screen brought up at **startup** (black primary + OSD) with the video plane adde
 on the first frame, tolerant of packet-loss decode errors, and runs forever — on
 a stream drop the last frame stays **frozen** and it reconnects on the next IDR.
 Env knobs: `WFBVID_OSD` (1=on, default), `WFBVID_OSD_SCALE` (glyph scale, default 2),
-`WFBVID_PT` (RTP payload type, default 97), `WFBVID_NV21` (default 1, DE33 chroma
-workaround), `WFBVID_BUFSIZE`, `WFBVID_ENC`/`WFBVID_RANGE`.
+`WFBVID_PT` (RTP payload type, default 97), `WFBVID_NV21` (default 0; set 1 only to
+force a Cb/Cr swap — on this DE33 it makes colours wrong, e.g. red→dark blue),
+`WFBVID_BUFSIZE`, `WFBVID_ENC`/`WFBVID_RANGE`.
 
 Requires the patched mainline kernel (NV12 on the DE33 VI plane, patch `0099`) and
 the v4l2request ffmpeg from `h618-mainline-video`.

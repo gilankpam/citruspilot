@@ -129,7 +129,7 @@ static uint32_t fb_from_frame(AVFrame *f)
             n++;
         }
     uint32_t fourcc = d->layers[0].format, fb = 0;
-    if (opt_nv21 && fourcc == DRM_FORMAT_NV12) fourcc = DRM_FORMAT_NV21;  // DE33 chroma U/V swap workaround
+    if (opt_nv21 && fourcc == DRM_FORMAT_NV12) fourcc = DRM_FORMAT_NV21;  // opt-in chroma U/V swap; default off (the DE33 scans NV12 with correct chroma — relabeling to NV21 swaps Cb/Cr → red shows as dark blue)
     uint64_t m = d->objects[0].format_modifier;
     int rc;
     if (m != DRM_FORMAT_MOD_INVALID && m != DRM_FORMAT_MOD_LINEAR)
@@ -337,7 +337,7 @@ int main(int argc, char **argv)
 {
     opt_enc   = getenv("WFBVID_ENC")   ? atoi(getenv("WFBVID_ENC"))   : 1;  // BT.709
     opt_range = getenv("WFBVID_RANGE") ? atoi(getenv("WFBVID_RANGE")) : 0;  // limited
-    opt_nv21  = getenv("WFBVID_NV21")  ? atoi(getenv("WFBVID_NV21"))  : 1;  // DE33 chroma swap workaround
+    opt_nv21  = getenv("WFBVID_NV21")  ? atoi(getenv("WFBVID_NV21"))  : 0;  // off: decoder exports true NV12; DE33 does NOT swap chroma (red↔blue if on)
     opt_debug = getenv("WFBVID_DEBUG") ? atoi(getenv("WFBVID_DEBUG")) : 0;
     int bufsz = getenv("WFBVID_BUFSIZE") ? atoi(getenv("WFBVID_BUFSIZE")) : 26214400;
 
