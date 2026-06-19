@@ -19,9 +19,8 @@ CitrusPilot is the **player only**. It consumes the de-FEC'd RTP that an
 stack itself (the `rtl8812au` driver, `wfb-ng`) is out of scope for this repo — it
 lives separately; `wfb_rx` is just the upstream that must be feeding `udp:5600`.
 
-The decode+display back-end is proven in
-[`h618-mainline-video`](../../h618-mainline-video) (`drmvid`); CitrusPilot adds the
-live RTP front-end on top of it.
+The decode+display back-end is derived from `drmvid`, a proven file-based player
+for this hardware; CitrusPilot adds the live RTP front-end on top of it.
 
 ## Layout
 
@@ -59,7 +58,7 @@ force a Cb/Cr swap — on this DE33 it makes colours wrong, e.g. red→dark blue
 `CITRUSVID_BUFSIZE`, `CITRUSVID_ENC`/`CITRUSVID_RANGE`.
 
 Requires the patched mainline kernel (NV12 on the DE33 VI plane, patch `0099`) and
-the v4l2request ffmpeg from `h618-mainline-video`.
+a v4l2request-patched ffmpeg (the `ffmpeg-v4l2request` build).
 
 ## Limitations
 
