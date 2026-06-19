@@ -1,4 +1,4 @@
-# CitrusPilot — build the citrusvid player (+ diagnostic tools, host unit tests).
+# CitrusPilot — build the citrusplay player (+ diagnostic tools, host unit tests).
 #
 # Native build (on the board, which has the libdrm + libav headers):
 #   make
@@ -10,7 +10,7 @@
 # Host unit tests (pure modules — any C compiler, no DRM/libav/board):
 #   make test
 #
-# Install citrusvid (default PREFIX=/usr/local):
+# Install citrusplay (default PREFIX=/usr/local):
 #   make install            (or: make install PREFIX=/usr DESTDIR=/staging)
 
 CC      ?= cc
@@ -18,10 +18,10 @@ PREFIX  ?= /usr/local
 DESTDIR ?=
 
 SRC := src
-BIN := citrusvid
+BIN := citrusplay
 
 # Player = the top-level src/*.c modules (tools/ and tests/ build separately).
-PLAYER_SRCS := $(SRC)/citrusvid.c $(SRC)/osd.c $(SRC)/osd_render.c \
+PLAYER_SRCS := $(SRC)/citrusplay.c $(SRC)/osd.c $(SRC)/osd_render.c \
                $(SRC)/stats.c $(SRC)/rtp_h265.c
 
 CFLAGS  ?= -O2 -Wall -Wextra

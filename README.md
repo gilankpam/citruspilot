@@ -24,7 +24,7 @@ for this hardware; CitrusPilot adds the live RTP front-end on top of it.
 
 ## Layout
 
-- `src/` — the player: `citrusvid` (RTP → Cedrus → DRM plane), plus `tools/` board
+- `src/` — the player: `citrusplay` (RTP → Cedrus → DRM plane), plus `tools/` board
   diagnostics and `tests/` host unit tests
 - `smoke/` — synthetic-RTP harness to validate the player front-end (no radio HW)
 - `docs/` — design specs + findings
@@ -32,7 +32,7 @@ for this hardware; CitrusPilot adds the live RTP front-end on top of it.
 ## Build & run
 
 ```sh
-# build (on the board) + install citrusvid to /usr/local/bin
+# build (on the board) + install citrusplay to /usr/local/bin
 make && make install
 
 # cross-build from an x86 dev host against a buildroot staging sysroot:
@@ -44,19 +44,19 @@ wfb_rx -K gs.key -c 127.0.0.1 -u 5600 -p <radio_port> <monitor_iface> &
 
 # play: listens forever on udp:5600, HUD overlay on. Run as root (it takes DRM
 # master and force-sets a large UDP buffer) on a free console.
-citrusvid --port 5600
+citrusplay --port 5600
 ```
 
-`citrusvid` listens on a UDP port (default 5600) with a built-in SDP, ingests
+`citrusplay` listens on a UDP port (default 5600) with a built-in SDP, ingests
 the live RTP with a large UDP socket buffer + low-delay flags, HW-decodes on
 Cedrus, and scans direct-to-plane — **no PTS pacing** (present on decode), the
 screen brought up at **startup** (black primary + OSD) with the video plane added
 on the first frame, tolerant of packet-loss decode errors, and runs forever — on
 a stream drop the last frame stays **frozen** and it reconnects on the next IDR.
-Env knobs: `CITRUSVID_OSD` (1=on, default), `CITRUSVID_OSD_SCALE` (glyph scale, default 2),
-`CITRUSVID_PT` (RTP payload type, default 97), `CITRUSVID_NV21` (default 0; set 1 only to
+Env knobs: `CITRUSPLAY_OSD` (1=on, default), `CITRUSPLAY_OSD_SCALE` (glyph scale, default 2),
+`CITRUSPLAY_PT` (RTP payload type, default 97), `CITRUSPLAY_NV21` (default 0; set 1 only to
 force a Cb/Cr swap — on this DE33 it makes colours wrong, e.g. red→dark blue),
-`CITRUSVID_BUFSIZE`, `CITRUSVID_ENC`/`CITRUSVID_RANGE`.
+`CITRUSPLAY_BUFSIZE`, `CITRUSPLAY_ENC`/`CITRUSPLAY_RANGE`.
 
 Requires the patched mainline kernel (NV12 on the DE33 VI plane, patch `0099`) and
 a v4l2request-patched ffmpeg (the `ffmpeg-v4l2request` build).
@@ -79,7 +79,7 @@ a v4l2request-patched ffmpeg (the `ffmpeg-v4l2request` build).
 | Item | State |
 |---|---|
 | player pipe (RTP→Cedrus), front-end choice | ✅ libav/SDP |
-| `citrusvid` live RTP→plane | ✅ validated end-to-end — live 1080p60 H.265 on the plane |
+| `citrusplay` live RTP→plane | ✅ validated end-to-end — live 1080p60 H.265 on the plane |
 | OSD overlay (system: CPU/mem/temp) + run-forever daemon | ✅ v1 |
 
 > The radio prerequisite (rtl8812au + wfb-ng bring-up) is documented separately and

@@ -35,7 +35,7 @@ jobs:
         with:
           platforms: arm64
 
-      - name: Build citrusvid for aarch64 (Allwinner) in an arm64 trixie container
+      - name: Build citrusplay for aarch64 (Allwinner) in an arm64 trixie container
         run: |
           docker run --rm --platform linux/arm64 -v "$PWD":/src -w /src \
             debian:trixie-slim bash -euxc '
@@ -44,9 +44,9 @@ jobs:
               apt-get install -y --no-install-recommends \
                 gcc libc6-dev make libavcodec-dev libavutil-dev libdrm-dev binutils file
               make
-              strip citrusvid
-              file citrusvid
-              echo "--- NEEDED ---"; objdump -p citrusvid | grep NEEDED
+              strip citrusplay
+              file citrusplay
+              echo "--- NEEDED ---"; objdump -p citrusplay | grep NEEDED
             '
 
       - name: Package
@@ -54,7 +54,7 @@ jobs:
         run: |
           NAME=citruspilot-aarch64
           mkdir -p "dist/$NAME"
-          cp citrusvid README.md "dist/$NAME/"
+          cp citrusplay README.md "dist/$NAME/"
           tar -C dist -czf "$NAME.tar.gz" "$NAME"
           sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
           echo "tarball=$NAME.tar.gz" >> "$GITHUB_OUTPUT"
@@ -71,7 +71,7 @@ jobs:
           **Target:** Allwinner aarch64 (e.g. Orange Pi Zero 2W / H618).
           **Runtime deps:** ffmpeg 7.x (\`libavcodec.so.61\`, \`libavutil.so.59\`) + \`libdrm.so.2\`.
 
-          Install: unpack and copy \`citrusvid\` -> \`/usr/local/bin\`; run as root on a free console.
+          Install: unpack and copy \`citrusplay\` -> \`/usr/local/bin\`; run as root on a free console.
           EOF
           )"
           # Recreate the rolling tag/release at the current commit.

@@ -5,7 +5,7 @@
 build/
 **/*.bin
 # compiled outputs (Makefile)
-/citrusvid
+/citrusplay
 /src/tools/plane-formats
 /src/tools/plane-probe
 /src/tools/v4l2-formats

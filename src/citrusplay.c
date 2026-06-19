@@ -1,4 +1,4 @@
-// citrusvid — direct-to-plane HW video player for a LIVE RTP stream (wfb-ng FPV) on
+// citrusplay — direct-to-plane HW video player for a LIVE RTP stream (wfb-ng FPV) on
 // the Allwinner H618. Derived from drmvid (h618-mainline-video): the same
 // Cedrus (v4l2request) -> DRM-PRIME NV12 -> hardware overlay-plane scanout, zero
 // copy, no GPU compositing. The difference is the front-end: instead of a file
@@ -19,7 +19,7 @@
 // and scans 1:1 (the DE33 VI scaler can't upscale), centring sub-mode video.
 //
 // Build: make            (cross: make SYSROOT=/path/to/staging CC=aarch64-...-gcc)
-// Use:   citrusvid [--port N]     (built-in H.265 SDP; default udp:5600)
+// Use:   citrusplay [--port N]     (built-in H.265 SDP; default udp:5600)
 
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -57,8 +57,8 @@
 #include "rtp_h265.h"
 #include "osd.h"
 
-#define DIE(...) do { fprintf(stderr, "citrusvid: " __VA_ARGS__); fprintf(stderr, "\n"); exit(1); } while (0)
-#define LOG(...) do { fprintf(stderr, "citrusvid: " __VA_ARGS__); fprintf(stderr, "\n"); } while (0)
+#define DIE(...) do { fprintf(stderr, "citrusplay: " __VA_ARGS__); fprintf(stderr, "\n"); exit(1); } while (0)
+#define LOG(...) do { fprintf(stderr, "citrusplay: " __VA_ARGS__); fprintf(stderr, "\n"); } while (0)
 
 static int drm_fd;
 static uint32_t conn_id, crtc_id, vplane_id, pplane_id, mode_blob;
@@ -349,11 +349,11 @@ static void close_input(input_t *in)
 
 int main(int argc, char **argv)
 {
-    opt_enc   = getenv("CITRUSVID_ENC")   ? atoi(getenv("CITRUSVID_ENC"))   : 1;  // BT.709
-    opt_range = getenv("CITRUSVID_RANGE") ? atoi(getenv("CITRUSVID_RANGE")) : 0;  // limited
-    opt_nv21  = getenv("CITRUSVID_NV21")  ? atoi(getenv("CITRUSVID_NV21"))  : 0;  // off: decoder exports true NV12; DE33 does NOT swap chroma (red↔blue if on)
-    opt_debug = getenv("CITRUSVID_DEBUG") ? atoi(getenv("CITRUSVID_DEBUG")) : 0;
-    int bufsz = getenv("CITRUSVID_BUFSIZE") ? atoi(getenv("CITRUSVID_BUFSIZE")) : 26214400;
+    opt_enc   = getenv("CITRUSPLAY_ENC")   ? atoi(getenv("CITRUSPLAY_ENC"))   : 1;  // BT.709
+    opt_range = getenv("CITRUSPLAY_RANGE") ? atoi(getenv("CITRUSPLAY_RANGE")) : 0;  // limited
+    opt_nv21  = getenv("CITRUSPLAY_NV21")  ? atoi(getenv("CITRUSPLAY_NV21"))  : 0;  // off: decoder exports true NV12; DE33 does NOT swap chroma (red↔blue if on)
+    opt_debug = getenv("CITRUSPLAY_DEBUG") ? atoi(getenv("CITRUSPLAY_DEBUG")) : 0;
+    int bufsz = getenv("CITRUSPLAY_BUFSIZE") ? atoi(getenv("CITRUSPLAY_BUFSIZE")) : 26214400;
 
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
@@ -456,8 +456,8 @@ int main(int argc, char **argv)
     }
 
     // ---- bring a screen up immediately (preferred mode, black primary) ----
-    opt_osd       = getenv("CITRUSVID_OSD")       ? atoi(getenv("CITRUSVID_OSD"))       : 1;
-    opt_osd_scale = getenv("CITRUSVID_OSD_SCALE") ? atoi(getenv("CITRUSVID_OSD_SCALE")) : 2;
+    opt_osd       = getenv("CITRUSPLAY_OSD")       ? atoi(getenv("CITRUSPLAY_OSD"))       : 1;
+    opt_osd_scale = getenv("CITRUSPLAY_OSD_SCALE") ? atoi(getenv("CITRUSPLAY_OSD_SCALE")) : 2;
 
     pick_preferred_mode();
     uint32_t pfb = make_black_primary();

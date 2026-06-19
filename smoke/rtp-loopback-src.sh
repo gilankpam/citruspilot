@@ -22,7 +22,7 @@ set -eu
 FILE="${FILE:-/root/sample.mkv}"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-5600}"
-PT="${PT:-97}"             # match the player's CITRUSVID_PT (default 97)
+PT="${PT:-97}"             # match the player's CITRUSPLAY_PT (default 97)
 MODE="${MODE:-emulate}"    # emulate (re-encode, in-band headers) | copy
 SIZE="${SIZE:-960x540}"    # downscale so the software encoder can keep up
 BITRATE="${BITRATE:-3M}"
