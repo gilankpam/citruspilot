@@ -41,6 +41,16 @@
 #include <libavutil/hwcontext.h>
 #include <libavutil/hwcontext_drm.h>
 #include <libavutil/pixdesc.h>
+
+/* The V4L2 Request API hwaccel is NOT in upstream/Debian ffmpeg — the target
+ * runs a patched libav (sbc-groundstations ffmpeg-v4l2request) that appends this
+ * type right after AV_HWDEVICE_TYPE_D3D12VA. Allow building against stock headers
+ * (e.g. CI) by defining it to the same value the patch uses (last type + 1); the
+ * runtime libavutil on the board is the one that actually implements it. */
+#ifndef AV_HWDEVICE_TYPE_V4L2REQUEST
+#define AV_HWDEVICE_TYPE_V4L2REQUEST ((enum AVHWDeviceType)(AV_HWDEVICE_TYPE_D3D12VA + 1))
+#endif
+
 #include <time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
