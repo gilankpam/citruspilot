@@ -67,11 +67,7 @@ osd_t *osd_create(int drm_fd, uint32_t crtc_id, uint32_t plane_id,
     o->props = *props; o->scale = scale; o->zpos = zpos_val;
 
     osd_box_size(OSD_COLS, OSD_LINES, scale, OSD_PAD, &o->box_w, &o->box_h);
-    o->x = margin; o->y = margin;
-    if (o->x + o->box_w > screen_w) o->x = screen_w - o->box_w;
-    if (o->y + o->box_h > screen_h) o->y = screen_h - o->box_h;
-    if (o->x < 0) o->x = 0;
-    if (o->y < 0) o->y = 0;
+    osd_origin(screen_w, screen_h, o->box_w, o->box_h, margin, &o->x, &o->y);
 
     struct drm_mode_create_dumb cd = { .width = o->box_w, .height = o->box_h, .bpp = 32 };
     if (drmIoctl(drm_fd, DRM_IOCTL_MODE_CREATE_DUMB, &cd)) { free(o); return NULL; }

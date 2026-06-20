@@ -17,6 +17,17 @@ int main(void) {
     assert(osd_scale_for_height(2160) == 4);   /* 2160/540 = 4.0 (4K) */
     assert(osd_scale_for_height(0)    == 1);   /* never below 1 */
 
+    /* HUD origin sits in the TOP-RIGHT corner, `margin` px in from the top and
+     * right edges, clamped on-screen. */
+    int ox, oy;
+    osd_origin(1280, 720, 152, 56, 16, &ox, &oy);
+    assert(ox == 1280 - 152 - 16);   /* 1112: margin in from the right edge */
+    assert(oy == 16);                /* margin down from the top edge */
+    /* box wider than the screen -> clamp x to 0, keep top margin */
+    osd_origin(100, 100, 152, 56, 16, &ox, &oy);
+    assert(ox == 0);
+    assert(oy == 16);
+
     uint32_t bg = OSD_ARGB(0x80, 0, 0, 0);
     uint32_t fg = OSD_ARGB(0xff, 0xff, 0xff, 0xff);
     uint32_t *buf = calloc((size_t)w * h, sizeof *buf);

@@ -50,3 +50,14 @@ int osd_scale_for_height(int screen_h)
     int s = (screen_h + 270) / 540;   /* round(screen_h / 540), integer math */
     return s < 1 ? 1 : s;
 }
+
+void osd_origin(int screen_w, int screen_h, int box_w, int box_h, int margin,
+                int *x, int *y)
+{
+    *x = screen_w - box_w - margin;   /* margin in from the right edge */
+    *y = margin;                      /* margin down from the top edge */
+    if (*x + box_w > screen_w) *x = screen_w - box_w;
+    if (*y + box_h > screen_h) *y = screen_h - box_h;
+    if (*x < 0) *x = 0;
+    if (*y < 0) *y = 0;
+}

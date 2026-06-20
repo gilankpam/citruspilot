@@ -29,4 +29,10 @@ void osd_box_size(int cols, int nlines, int scale, int pad, int *w, int *h);
  * screen_h/540 so the HUD stays a roughly constant fraction of the display
  * (=2 at 1080p, =1 at 720p, =4 at 4K). Never returns below 1. */
 int osd_scale_for_height(int screen_h);
+
+/* Top-left origin (*x,*y) that places a box_w x box_h HUD in the TOP-RIGHT
+ * corner of a screen_w x screen_h screen, `margin` px in from the top and right
+ * edges, clamped so the box stays on-screen. */
+void osd_origin(int screen_w, int screen_h, int box_w, int box_h, int margin,
+                int *x, int *y);
 #endif
