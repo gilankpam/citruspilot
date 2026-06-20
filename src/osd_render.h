@@ -24,4 +24,9 @@ int osd_draw_text(uint32_t *buf, int w, int h, int stride_px,
 /* Pixel size for `nlines` rows of `cols` chars at `scale`, with `pad` px on
  * every side. */
 void osd_box_size(int cols, int nlines, int scale, int pad, int *w, int *h);
+
+/* Resolution-proportional glyph scale for a screen `screen_h` px tall: rounds
+ * screen_h/540 so the HUD stays a roughly constant fraction of the display
+ * (=2 at 1080p, =1 at 720p, =4 at 4K). Never returns below 1. */
+int osd_scale_for_height(int screen_h);
 #endif

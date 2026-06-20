@@ -58,6 +58,7 @@
 #include <netinet/in.h>
 #include "rtp_h265.h"
 #include "osd.h"
+#include "osd_render.h"
 
 #define DIE(...) do { fprintf(stderr, "citrusplay: " __VA_ARGS__); fprintf(stderr, "\n"); exit(1); } while (0)
 #define LOG(...) do { fprintf(stderr, "citrusplay: " __VA_ARGS__); fprintf(stderr, "\n"); } while (0)
@@ -89,6 +90,14 @@ static void nsleep_ms(long ms)
 {
     struct timespec t = { ms / 1000, (ms % 1000) * 1000000L };
     nanosleep(&t, NULL);
+}
+
+/* Effective OSD glyph scale: the CITRUSPLAY_OSD_SCALE override when set
+ * (opt_osd_scale > 0), else derived from the current mode height so the HUD
+ * stays a roughly constant fraction of the screen as the resolution changes. */
+static int osd_scale_now(void)
+{
+    return opt_osd_scale > 0 ? opt_osd_scale : osd_scale_for_height(mode.vdisplay);
 }
 
 static volatile int flip_pending;
@@ -325,7 +334,7 @@ static void retune_mode(int w, int h, uint32_t *pfb_io)
     if (osd) {                                     /* OSD dumb buffer was sized to the old mode */
         osd_destroy(osd);
         osd = osd_create(drm_fd, crtc_id, osd_plane_id, &Op,
-                         mode.hdisplay, mode.vdisplay, 16, opt_osd_scale, osd_zpos_max);
+                         mode.hdisplay, mode.vdisplay, 16, osd_scale_now(), osd_zpos_max);
         if (!osd) LOG("OSD rebuild after retune failed — video unaffected");
     }
     startup_modeset(newpfb);
@@ -511,7 +520,7 @@ int main(int argc, char **argv)
 
     // ---- bring a screen up immediately (preferred mode, black primary) ----
     opt_osd       = getenv("CITRUSPLAY_OSD")       ? atoi(getenv("CITRUSPLAY_OSD"))       : 1;
-    opt_osd_scale = getenv("CITRUSPLAY_OSD_SCALE") ? atoi(getenv("CITRUSPLAY_OSD_SCALE")) : 2;
+    opt_osd_scale = getenv("CITRUSPLAY_OSD_SCALE") ? atoi(getenv("CITRUSPLAY_OSD_SCALE")) : 0;  /* 0 = auto-scale from resolution */
 
     pick_preferred_mode();
     uint32_t pfb = make_black_primary();
@@ -523,7 +532,7 @@ int main(int argc, char **argv)
         video_zpos = (osd_zpos_max > 0) ? osd_zpos_max - 1 : 0;
         if (video_zpos > vplane_zmax) video_zpos = vplane_zmax;
         osd = osd_create(drm_fd, crtc_id, osd_plane_id, &Op,
-                         mode.hdisplay, mode.vdisplay, 16, opt_osd_scale, osd_zpos_max);
+                         mode.hdisplay, mode.vdisplay, 16, osd_scale_now(), osd_zpos_max);
         if (!osd) LOG("OSD disabled (osd_create failed) — video unaffected");
     } else {
         video_zpos = vplane_zmax;
@@ -538,6 +547,7 @@ int main(int argc, char **argv)
     AVFrame  *held[2] = { NULL, NULL };
     uint32_t  heldfb[2] = { 0, 0 };
     int slot = 0, video_up = 0, warned_sw = 0;
+    int cur_w = 0, cur_h = 0;   /* resolution currently committed to the plane/mode */
     AVFrame *pending = NULL; uint32_t pending_fb = 0;  /* newest decoded frame, not yet shown */
     long shown = 0;
     static uint8_t rxbuf[65536];
@@ -602,10 +612,18 @@ int main(int argc, char **argv)
 
         /* Socket drained = caught up to live: present the newest frame (vsync-paced). */
         if (pending) {
-            if (!video_up) {
+            /* (Re)configure the plane whenever the stream size changes — at the
+             * first frame, or mid-stream when the encoder switches resolution.
+             * A bare flip() only swaps FB_ID; it leaves the plane's SRC/CRTC
+             * rectangle (and the HDMI mode) at the old size, so a differently
+             * sized FB would fail the atomic commit and the screen would blank.
+             * Re-running the full setup retunes the mode and resizes the plane. */
+            if (!video_up || pending->width != cur_w || pending->height != cur_h) {
+                drain_flip();   /* no flip may be in flight across a modeset */
                 retune_mode(pending->width, pending->height, &pfb);  /* match HDMI to the stream (DE33 is 1:1) */
                 commit_video_plane(pending_fb, pending->width, pending->height);
-                video_up = 1; LOG("playing.");
+                cur_w = pending->width; cur_h = pending->height;
+                video_up = 1; LOG("playing %dx%d.", cur_w, cur_h);
             } else {
                 drain_flip(); flip(pending_fb);
             }

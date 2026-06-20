@@ -44,3 +44,9 @@ void osd_box_size(int cols, int nlines, int scale, int pad, int *w, int *h)
     *w = cols * 8 * scale + 2 * pad;
     *h = nlines * 16 * scale + 2 * pad;
 }
+
+int osd_scale_for_height(int screen_h)
+{
+    int s = (screen_h + 270) / 540;   /* round(screen_h / 540), integer math */
+    return s < 1 ? 1 : s;
+}

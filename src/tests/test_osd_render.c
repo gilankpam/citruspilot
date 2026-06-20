@@ -9,6 +9,14 @@ int main(void) {
     assert(w == 12 * 8 * 2 + 2 * 4);
     assert(h == 3 * 16 * 2 + 2 * 4);
 
+    /* resolution-proportional OSD glyph scale: ~2 at 1080p, rounds, floors at 1 */
+    assert(osd_scale_for_height(1080) == 2);   /* 1080/540 = 2.0  */
+    assert(osd_scale_for_height(720)  == 1);   /* 720/540 = 1.33 -> 1 */
+    assert(osd_scale_for_height(540)  == 1);   /* 540/540 = 1.0  */
+    assert(osd_scale_for_height(1440) == 3);   /* 1440/540 = 2.67 -> 3 */
+    assert(osd_scale_for_height(2160) == 4);   /* 2160/540 = 4.0 (4K) */
+    assert(osd_scale_for_height(0)    == 1);   /* never below 1 */
+
     uint32_t bg = OSD_ARGB(0x80, 0, 0, 0);
     uint32_t fg = OSD_ARGB(0xff, 0xff, 0xff, 0xff);
     uint32_t *buf = calloc((size_t)w * h, sizeof *buf);
