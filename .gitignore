@@ -22,3 +22,6 @@ build/
 /docs/BRINGUP.md
 /docs/findings/stage1-radio-build.md
 /docs/findings/stage2-3-live-link.md
+
+# process artifacts (specs/plans from agent workflow) — kept on disk, untracked
+/docs/superpowers/
