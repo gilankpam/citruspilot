@@ -45,11 +45,13 @@ $(BIN): $(PLAYER_SRCS)
 	$(CC) $(ALLCFLAGS) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
 # Board-side diagnostics: plane-* need libdrm, v4l2-formats needs only headers.
-TOOLS := plane-formats plane-probe v4l2-formats
+TOOLS := plane-formats plane-probe v4l2-formats scale-probe
 tools: $(addprefix $(SRC)/tools/,$(TOOLS))
 $(SRC)/tools/plane-formats: $(SRC)/tools/plane-formats.c
 	$(CC) $(ALLCFLAGS) $< -o $@ $(LDFLAGS) -ldrm
 $(SRC)/tools/plane-probe: $(SRC)/tools/plane-probe.c
+	$(CC) $(ALLCFLAGS) $< -o $@ $(LDFLAGS) -ldrm
+$(SRC)/tools/scale-probe: $(SRC)/tools/scale-probe.c
 	$(CC) $(ALLCFLAGS) $< -o $@ $(LDFLAGS) -ldrm
 $(SRC)/tools/v4l2-formats: $(SRC)/tools/v4l2-formats.c
 	$(CC) $(ALLCFLAGS) $< -o $@ $(LDFLAGS)

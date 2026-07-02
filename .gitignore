@@ -8,6 +8,7 @@ build/
 /citrusplay
 /src/tools/plane-formats
 /src/tools/plane-probe
+/src/tools/scale-probe
 /src/tools/v4l2-formats
 # capture files
 *.pcap

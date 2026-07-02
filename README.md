@@ -56,29 +56,26 @@ a stream drop the last frame stays **frozen** and it reconnects on the next IDR.
 Env knobs: `CITRUSPLAY_OSD` (1=on, default), `CITRUSPLAY_OSD_SCALE` (glyph scale, default 2),
 `CITRUSPLAY_PT` (RTP payload type, default 97), `CITRUSPLAY_NV21` (default 0; set 1 only to
 force a Cb/Cr swap — on this DE33 it makes colours wrong, e.g. red→dark blue),
-`CITRUSPLAY_BUFSIZE`, `CITRUSPLAY_ENC`/`CITRUSPLAY_RANGE`.
+`CITRUSPLAY_BUFSIZE`, `CITRUSPLAY_ENC`/`CITRUSPLAY_RANGE`,
+`CITRUSPLAY_RETUNE` (1=force HDMI mode retune instead of HW scaling, default 0).
 
 Requires the patched mainline kernel (NV12 on the DE33 VI plane, patch `0099`) and
 a v4l2request-patched ffmpeg (the `ffmpeg-v4l2request` build).
 
 ## Limitations
 
-- **No video scaling (DE33 VI plane is 1:1 only).** The DE33 video plane cannot
-  scale — it rejects any commit where the source and destination rects differ
-  (probed: 1:1 accepted, up- *and* down-scale rejected with `ERANGE`). So the
-  decoded frame is scanned out at its **native size** in the display mode. To
-  avoid cropping (mode smaller than the stream) or black padding (mode larger),
-  `citrusplay` **auto-matches the HDMI output mode to the stream** on the first
-  decoded frame: it brings the screen up at startup in the sink's EDID-preferred
-  mode, then — once it knows the real video size — retunes the panel to the EDID
-  mode of the same resolution (highest non-interlaced refresh) if the sink offers
-  one (see `retune_mode` in `src/citrusplay.c`). This matters because many FPV
-  goggles advertise **720p as their preferred mode** even though they also list
-  1080p — so a 1080p stream would otherwise be cropped to a 720p viewport. If the
-  sink has no mode matching the stream, the startup mode is kept and the frame is
-  centred (cropped or letterboxed) as before. Unlike Rockchip (`PixelPilot_rk`),
-  which fills the screen via the VOP plane's hardware scaler, the DE33 has no such
-  scaler, so plane-side fill is not an option.
+- **Video scaling needs a patched kernel (DE33 ships 1:1-only).** Mainline
+  disables the DE33 plane scaler (`sun50i_planes.c` sets `.scaler_mask = 0`,
+  "TODO: All planes support scaling, but driver needs improvements") so any
+  non-1:1 commit fails with `ERANGE` — a **driver gap, not a hardware limit**
+  (probed live with `src/tools/scale-probe.c`). The sbc-groundstations image
+  carries a one-line kernel patch enabling the VI (video) channels
+  (`scaler_mask = 0x7`, validated on the H618 VSU), and `citrusplay` then
+  HW-scales the stream to aspect-fit the sink's startup mode — no HDMI mode
+  switch. On an unpatched kernel (probed per stream size with a `TEST_ONLY`
+  commit), or with `CITRUSPLAY_RETUNE=1`, it falls back to the old behavior:
+  retune the HDMI output to the EDID mode matching the stream (see
+  `retune_mode` in `src/citrusplay.c`), else centre the frame 1:1.
 
 ## Status
 

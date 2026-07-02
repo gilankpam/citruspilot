@@ -9,16 +9,17 @@
 //     configurable UDP port, with a large socket buffer (bursty RTP) + low-delay
 //   * NO presentation pacing — each frame is scanned out the instant it decodes
 //   * RUN FOREVER — the screen is brought up at startup (preferred mode, black
-//     primary); the video plane appears on the first decoded frame, at which
-//     point the HDMI mode is retuned to MATCH the stream size (DE33 is 1:1, no
-//     scaler — see retune_mode). On a stream drop the last frame stays FROZEN
+//     primary); the video plane appears on the first decoded frame, HW-scaled
+//     to aspect-fit the mode (kernel scaler_mask patch; falls back to retuning
+//     the HDMI mode to the stream size on unpatched 1:1-only kernels, or set
+//     CITRUSPLAY_RETUNE=1 to force that). On a stream drop the frame stays FROZEN
 //     and the player keeps waiting / reconnects, resuming on the next IDR. Only
 //     SIGINT/SIGTERM exits.
 //   * tolerant of decode errors (packet loss -> corrupt frames until the next
 //     IDR) — it skips bad frames, never crashes
 //
-// Requires kernel patch 0099 (NV12 on the DE33 VI plane) + linear-NV12 Cedrus,
-// and scans 1:1 (the DE33 VI scaler can't upscale), centring sub-mode video.
+// Requires kernel patch 0099 (NV12 on the DE33 VI plane) + linear-NV12 Cedrus;
+// full-screen scaling additionally needs the DE33 scaler_mask kernel patch.
 //
 // Build: make            (cross: make SYSROOT=/path/to/staging CC=aarch64-...-gcc)
 // Use:   citrusplay [--port N]     (built-in H.265 SDP; default udp:5600)
@@ -59,6 +60,7 @@
 #include "rtp_h265.h"
 #include "osd.h"
 #include "osd_render.h"
+#include "fit_rect.h"
 
 #define DIE(...) do { fprintf(stderr, "citrusplay: " __VA_ARGS__); fprintf(stderr, "\n"); exit(1); } while (0)
 #define LOG(...) do { fprintf(stderr, "citrusplay: " __VA_ARGS__); fprintf(stderr, "\n"); } while (0)
@@ -75,6 +77,7 @@ static uint32_t Pp_FB, Pp_CRTC, Pp_CX, Pp_CY, Pp_CW, Pp_CH, Pp_SX, Pp_SY, Pp_SW,
 static uint32_t Vp_CENC, Vp_CRANGE;
 static uint64_t vplane_zmax = 1;
 static int opt_enc, opt_range, opt_nv21, opt_debug;
+static int opt_retune;              /* CITRUSPLAY_RETUNE=1: force HDMI mode retune (old behavior) */
 static int opt_port;
 static uint64_t video_zpos = 1;              /* set from vplane zmax at runtime */
 static uint32_t osd_plane_id;
@@ -212,22 +215,45 @@ static void startup_modeset(uint32_t pfb)
     drmModeAtomicFree(r);
 }
 
-/* Bring up the video overlay plane, centred 1:1 within the active mode. Called
- * once, on the first decoded frame. */
-static void commit_video_plane(uint32_t vfb, int vw, int vh)
+/* Bring up / reconfigure the video overlay plane: SRC = the full vw x vh
+ * frame, CRTC = rect d (either an aspect-fit scaled rect or a centred 1:1
+ * one). Called on the first decoded frame and on stream-size changes. */
+static void commit_video_plane(uint32_t vfb, int vw, int vh, fit_rect_t d)
 {
-    int dx = (mode.hdisplay - vw) / 2, dy = (mode.vdisplay - vh) / 2;
-    if (dx < 0) dx = 0;
-    if (dy < 0) dy = 0;
     drmModeAtomicReq *r = drmModeAtomicAlloc();
     add_plane(r, vplane_id, Vp_FB, Vp_CRTC, Vp_CX, Vp_CY, Vp_CW, Vp_CH, Vp_SX, Vp_SY, Vp_SW, Vp_SH,
-              vfb, dx, dy, vw, vh, vw, vh);
+              vfb, d.x, d.y, d.w, d.h, vw, vh);
     if (Vp_ZPOS)   drmModeAtomicAddProperty(r, vplane_id, Vp_ZPOS, video_zpos);
     if (Vp_CENC)   drmModeAtomicAddProperty(r, vplane_id, Vp_CENC, opt_enc);
     if (Vp_CRANGE) drmModeAtomicAddProperty(r, vplane_id, Vp_CRANGE, opt_range);
     if (drmModeAtomicCommit(drm_fd, r, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL))
         LOG("video plane commit: %s", strerror(errno));
     drmModeAtomicFree(r);
+}
+
+/* Centred 1:1 rect — the pre-scaling behavior (crops when the mode is
+ * smaller than the video; the kernel clips the plane to the CRTC). */
+static fit_rect_t centred_1to1(int vw, int vh)
+{
+    fit_rect_t d = { (mode.hdisplay - vw) / 2, (mode.vdisplay - vh) / 2, vw, vh };
+    if (d.x < 0) d.x = 0;
+    if (d.y < 0) d.y = 0;
+    return d;
+}
+
+/* Will the kernel scale the video plane to rect d? TEST_ONLY commit — no
+ * visible effect. An unpatched DE33 kernel rejects non-1:1 with ERANGE;
+ * then we fall back to retuning the HDMI mode as before. */
+static int probe_plane_scaling(uint32_t vfb, int vw, int vh, fit_rect_t d)
+{
+    if (d.w == vw && d.h == vh) return 1;     /* 1:1 — nothing to prove */
+    drmModeAtomicReq *r = drmModeAtomicAlloc();
+    add_plane(r, vplane_id, Vp_FB, Vp_CRTC, Vp_CX, Vp_CY, Vp_CW, Vp_CH, Vp_SX, Vp_SY, Vp_SW, Vp_SH,
+              vfb, d.x, d.y, d.w, d.h, vw, vh);
+    int rc = drmModeAtomicCommit(drm_fd, r, DRM_MODE_ATOMIC_TEST_ONLY, NULL);
+    if (rc) LOG("plane scaling unavailable (%s) — falling back to mode retune", strerror(errno));
+    drmModeAtomicFree(r);
+    return rc == 0;
 }
 
 // Page-flip the overlay plane to a new framebuffer (vsync'd, async + event).
@@ -261,8 +287,9 @@ static enum AVPixelFormat get_drm_prime(AVCodecContext *c, const enum AVPixelFor
 }
 
 /* Pick the connector's preferred mode (fallback 1080p, then first) to bring a
- * screen up before any signal. This is the STARTUP mode only — once the first
- * frame decodes, retune_mode() switches to the mode matching the stream size. */
+ * screen up before any signal. This is the STARTUP mode — the video plane is
+ * HW-scaled to aspect-fit it on the first decoded frame; retune_mode() runs
+ * only as the fallback when plane scaling is unavailable. */
 static drmModeConnector *g_conn;
 static void pick_preferred_mode(void)
 {
@@ -291,16 +318,16 @@ static uint32_t make_black_primary(void)
     return pfb;
 }
 
-/* Auto-match the HDMI output to the decoded stream size. Called once, on the
- * first frame, once the real video resolution is known. The DE33 VI plane is
- * 1:1 (no scaler), so the ONLY way to show the stream pixel-for-pixel AND
- * full-screen is to drive the panel at the stream's own resolution — otherwise
- * a larger stream is cropped to the mode and a smaller one is letterboxed. The
- * sink's EDID-preferred mode (picked at startup so a screen comes up before any
- * signal) is often NOT the stream size — e.g. FPV goggles advertise 720p100 as
- * preferred but also list 1080p. Switch to the matching mode (highest refresh,
- * non-interlaced) if the sink offers one; otherwise keep the startup mode. The
- * mode-sized resources (black primary, OSD) are rebuilt for the new mode. */
+/* FALLBACK: auto-match the HDMI output to the decoded stream size. Used only
+ * when plane scaling is unavailable (unpatched 1:1-only DE33 kernel — see
+ * probe_plane_scaling) or forced via CITRUSPLAY_RETUNE=1. Without a scaler,
+ * full-screen pixel-for-pixel display means driving the panel at the stream's
+ * own resolution — otherwise a larger stream is cropped and a smaller one
+ * letterboxed. The sink's EDID-preferred startup mode is often NOT the stream
+ * size (FPV goggles advertise 720p100 preferred but also list 1080p). Switch
+ * to the matching mode (highest refresh, non-interlaced) if the sink offers
+ * one; otherwise keep the startup mode. Mode-sized resources (black primary,
+ * OSD) are rebuilt for the new mode. */
 static void retune_mode(int w, int h, uint32_t *pfb_io)
 {
     if (mode.hdisplay == w && mode.vdisplay == h) return;   /* startup mode already matches */
@@ -416,6 +443,7 @@ int main(int argc, char **argv)
     opt_range = getenv("CITRUSPLAY_RANGE") ? atoi(getenv("CITRUSPLAY_RANGE")) : 0;  // limited
     opt_nv21  = getenv("CITRUSPLAY_NV21")  ? atoi(getenv("CITRUSPLAY_NV21"))  : 0;  // off: decoder exports true NV12; DE33 does NOT swap chroma (red↔blue if on)
     opt_debug = getenv("CITRUSPLAY_DEBUG") ? atoi(getenv("CITRUSPLAY_DEBUG")) : 0;
+    opt_retune = getenv("CITRUSPLAY_RETUNE") ? atoi(getenv("CITRUSPLAY_RETUNE")) : 0;
     int bufsz = getenv("CITRUSPLAY_BUFSIZE") ? atoi(getenv("CITRUSPLAY_BUFSIZE")) : 26214400;
 
     signal(SIGINT, on_signal);
@@ -617,13 +645,22 @@ int main(int argc, char **argv)
              * A bare flip() only swaps FB_ID; it leaves the plane's SRC/CRTC
              * rectangle (and the HDMI mode) at the old size, so a differently
              * sized FB would fail the atomic commit and the screen would blank.
-             * Re-running the full setup retunes the mode and resizes the plane. */
+             * Re-running the full setup re-fits the plane (and retunes the mode in fallback). */
             if (!video_up || pending->width != cur_w || pending->height != cur_h) {
-                drain_flip();   /* no flip may be in flight across a modeset */
-                retune_mode(pending->width, pending->height, &pfb);  /* match HDMI to the stream (DE33 is 1:1) */
-                commit_video_plane(pending_fb, pending->width, pending->height);
+                drain_flip();   /* no flip may be in flight across a reconfigure */
+                fit_rect_t d = fit_rect(pending->width, pending->height,
+                                        mode.hdisplay, mode.vdisplay);
+                int scaled = !opt_retune && d.w > 0 &&
+                             probe_plane_scaling(pending_fb, pending->width, pending->height, d);
+                if (!scaled) {   /* forced or kernel can't scale: old behavior */
+                    retune_mode(pending->width, pending->height, &pfb);
+                    d = centred_1to1(pending->width, pending->height);
+                }
+                commit_video_plane(pending_fb, pending->width, pending->height, d);
                 cur_w = pending->width; cur_h = pending->height;
-                video_up = 1; LOG("playing %dx%d.", cur_w, cur_h);
+                video_up = 1;
+                LOG("playing %dx%d -> %dx%d%+d%+d in %s%s.", cur_w, cur_h,
+                    d.w, d.h, d.x, d.y, mode.name, scaled ? " (HW scaled)" : " (1:1)");
             } else {
                 drain_flip(); flip(pending_fb);
             }
